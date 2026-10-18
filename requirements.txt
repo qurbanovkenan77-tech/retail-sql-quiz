@@ -2,3 +2,5 @@ streamlit
 supabase
 psycopg[binary]
 python-dotenv
+pglast
+pandas
