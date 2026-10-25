@@ -350,23 +350,24 @@ correct. The app does not automatically repair failed SQL.
 checks that retrieved documents reach the API request, checks signed-out
 generation and quota errors, and exercises result comparison. The Gemini
 response is mocked in these offline checks. The GitHub Actions workflow runs
-them before the existing live database checks. An actual Gemini call and the
-deployed UI must also be tested with private credentials.
+them before the existing live database checks. These offline tests are
+supplemented by the manual live API and deployed checks described below.
 
-**Submission evidence still to capture after deployment:**
+### Deployed demonstration
 
-1. Basic screenshot: selected question, natural-language input and generated SQL.
-2. Extra credit screenshot: generated/executed SQL, result table and validation
-   outcome. The retrieval expander can also be shown as evidence of vector search.
+The deployed app uses `gemini-3.5-flash-lite`, configured through
+`GEMINI_MODEL` in Streamlit Secrets. Manual testing confirmed real Gemini SQL
+generation, read-only PostgreSQL execution, and successful result validation
+for Questions 1 and 5 locally and Question 1 on the deployed application.
 
-Save screenshots as `docs/screenshots/rag-basic.png` and
-`docs/screenshots/rag-validation.png` and embed them here before submitting:
+**Basic requirement — natural-language quiz question:**
 
-```markdown
-![Question and AI-generated SQL](docs/screenshots/rag-basic.png)
-![Executed SQL, result table, and validation](docs/screenshots/rag-validation.png)
-```
+![Natural-language question entered in the AI SQL assistant](docs/screenshots/rag-question.png)
 
-Do not include credentials in screenshots. This section documents the new
-implementation; the Week 7 verification above does not claim that the new
-Gemini integration has already been tested live.
+**Generated SQL and extra credit — execution and validation:**
+
+The screenshot below shows the AI-generated SELECT, the returned products
+(Headphones 80, Backpack 50, Desk Lamp 35), and the successful comparison with
+Question 1's expected result.
+
+![AI-generated SQL, PostgreSQL result table, and correct validation](docs/screenshots/rag-validation.png)
