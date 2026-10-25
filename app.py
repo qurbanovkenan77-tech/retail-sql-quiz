@@ -15,6 +15,7 @@ load_dotenv(Path(__file__).with_name(".env"))
 st.set_page_config(page_title="Retail SQL Quiz", page_icon="🛒")
 st.title("Retail SQL Quiz")
 st.caption("5 questions • 20 points • Live PostgreSQL database")
+st.caption("Now with RAG: ask a question, generate SQL, and validate its results.")
 
 # Each browser session gets its own authentication client.
 # Do not put this client in a shared cache.
@@ -222,3 +223,72 @@ if save_clicked:
         )
     else:
         st.success("Answer saved to your account.")
+
+st.divider()
+st.header("AI SQL assistant")
+st.write("Ask the selected quiz question in plain English. The assistant retrieves relevant knowledge from ChromaDB and sends it to Gemini.")
+natural_question = st.text_area(
+    "Your question in plain English",
+    value=question["prompt"],
+    key=f"natural_{user.id}_{question_id}",
+    max_chars=2000,
+)
+auto_execute = st.checkbox("Automatically run generated SQL and validate the result", value=True)
+st.caption(f"Validation compares the result with Quiz Question {question_id}. If you change what the question asks, its expected result may no longer apply.")
+rag_key = f"rag_{user.id}_{question_id}"
+
+if st.button("Generate SQL", type="primary"):
+    st.session_state.pop(rag_key, None)
+    try:
+        # Lazy import keeps the original quiz usable before RAG is initialized.
+        from rag import generate_sql
+
+        with st.spinner("Retrieving knowledge and asking Gemini…"):
+            generated = generate_sql(current_token(), natural_question)
+        st.session_state[rag_key] = generated
+        if auto_execute:
+            try:
+                from result_validation import validate_result
+
+                with st.spinner("Running read-only SQL and checking results…"):
+                    result_columns, result_rows = run_query(
+                        current_token(), question_id, generated["sql"]
+                    )
+                generated["columns"] = result_columns
+                generated["rows"] = result_rows
+                generated["matches"] = validate_result(
+                    result_columns, result_rows, question["expected_result"]
+                )
+            except (ValueError, PermissionError) as exc:
+                generated["execution_error"] = str(exc)
+            except Exception:
+                generated["execution_error"] = "Execution or audit logging failed. Check database configuration and permissions."
+    except (ValueError, PermissionError) as exc:
+        st.error(str(exc))
+    except Exception:
+        st.error("Could not initialize RAG. Check that the new requirements are installed, then check your app logs.")
+
+if rag_key in st.session_state:
+    generated = st.session_state[rag_key]
+    st.write("**Question:**", generated["question"])
+    st.subheader("Generated SQL")
+    st.code(generated["sql"], language="sql")
+    st.caption(f"AI API: Gemini • Model: {generated['model']}")
+    with st.expander("Retrieved knowledge — ChromaDB vector search"):
+        st.caption("TF-IDF vectors with cosine distance. Lower distance means closer vocabulary. These documents were retrieved before the API call.")
+        for document in generated["context"]:
+            st.markdown(f"**{document['title']}** — distance {document['distance']:.4f}")
+            st.text(document["text"])
+    if "execution_error" in generated:
+        st.error(generated["execution_error"])
+        st.info("SQL generation completed, but execution did not. You can edit the SQL in the quiz editor above and run it manually.")
+    elif "rows" in generated:
+        st.subheader("Executed result")
+        st.dataframe(pd.DataFrame(generated["rows"], columns=generated["columns"]), hide_index=True)
+        if generated["matches"]:
+            st.success(f"Correct: result matches the expected answer for Question {question_id}.")
+        else:
+            st.warning(f"Result does not match the expected answer for Question {question_id}.")
+        st.caption("Validation compares values, row order, and column order; SQL wording and column aliases may differ.")
+    else:
+        st.info("Automatic execution was disabled for this generation. Copy the SQL into the quiz editor above to run or save it.")

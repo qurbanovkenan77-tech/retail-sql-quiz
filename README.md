@@ -1,7 +1,7 @@
 # Retail SQL Quiz
 
 A 20-point SQL quiz built with Python, Streamlit, Supabase PostgreSQL,
-and Supabase Auth.
+and Supabase Auth, extended with ChromaDB retrieval and Gemini Text-to-SQL.
 
 ## Live quiz
 
@@ -30,8 +30,8 @@ GitHub Secrets. It runs on pushes to main and can also be started manually.
 Signed-out users cannot run queries, save answers, or load saved answers.
 Each user has their own saved answers.
 
-The quiz displays results for comparison; it does not automatically
-assign grades. Equivalent supported SQL queries are acceptable.
+The AI assistant automatically validates its executed result against the
+selected question. The app does not assign course grades. Equivalent supported SQL queries are acceptable.
 Answers are assessed by their results, not exact SQL text.
 
 ## Quiz questions
@@ -255,3 +255,118 @@ The live-database checks passed locally and in GitHub Actions.
 Manual checks confirmed sign-in, SQL execution, answer saving,
 saved-answer persistence after signing out and back in, and audit entries.
 Run and Save were also tested on the deployed website.
+
+## RAG extension (Week 8)
+
+### Architecture and AI API
+
+Natural-language question → local TF-IDF vector → ChromaDB cosine vector
+search (top 4 documents) → retrieved context plus question → Gemini API →
+generated PostgreSQL SELECT → optional automatic execution → result validation.
+
+The application reuses the Week 7 hosted PostgreSQL database and sign-in.
+`rag.py` builds a ChromaDB **in-memory vector database** in the deployed app
+process. It stores seven knowledge documents: database schema, business rules,
+and five example question/SQL pairs. Scikit-learn converts documents and user
+questions into TF-IDF vectors. Chroma's `collection.query(query_embeddings=...)`
+performs actual vector retrieval; its returned documents form the API context.
+The app displays retrieved document IDs/titles, text, and cosine distances.
+These are lexical vectors, not pretrained semantic embeddings; vocabulary
+overlap affects retrieval. No embedding model download or separate vector
+server is needed. The static index is shared; user questions and answers are
+not stored in the shared index. It rebuilds after app restart.
+
+Gemini is called through Google's `generateContent` REST endpoint with the key
+in the `x-goog-api-key` header. The default model is `gemini-flash-latest`;
+`GEMINI_MODEL` can select another available Gemini text model. There is no
+fallback that returns a stored SQL answer when the AI API fails. Retrieved
+examples may include the selected question's solution; few-shot examples are
+part of the knowledge corpus. The generated SQL still comes from the API.
+
+Only the question and retrieved educational knowledge are sent to Gemini.
+Database passwords, Supabase tokens, saved answers, and result rows are not
+included in that request. API usage is subject to the provider's quotas and pricing.
+
+### Run locally
+
+Reuse your existing `.env` database and Supabase settings from the setup above.
+Add these local settings (replace the placeholder privately):
+
+```dotenv
+GEMINI_API_KEY="your_private_key_here"
+GEMINI_MODEL="gemini-flash-latest"
+```
+
+```bash
+python -m pip install -r requirements.txt
+python rag_checks.py
+python -m streamlit run app.py
+```
+
+Sign in, choose a quiz question, and scroll to **AI SQL assistant**. The
+plain-English input starts with that quiz question; you can also rephrase it.
+Leave **Automatically run generated SQL and validate the result** checked,
+then click **Generate SQL**. The app shows generated SQL, retrieved knowledge,
+the executed result table, and whether it matches the selected quiz answer.
+Turn the checkbox off to generate SQL without executing it. Copy generated
+SQL into the existing quiz editor if you want to edit or save it.
+
+### Deploy the extension
+
+Push the updated source and requirements to the same repository. In the
+existing Streamlit app's Secrets settings, add these **root-level TOML** entries
+alongside the existing database and Supabase secrets:
+
+```toml
+GEMINI_API_KEY = "your_private_key_here"
+GEMINI_MODEL = "gemini-flash-latest"
+```
+
+Save the secrets and allow the app to restart/redeploy. Never commit the actual
+key or secrets file. Gemini credentials are not required for offline CI tests;
+the existing live database CI still uses GitHub Secrets. Streamlit may put
+inactive apps to sleep; use the wake-up button and wait for it to restart.
+
+### Automatic execution and validation (extra credit)
+
+Generated SQL uses the existing `run_query` function. Authentication, SQL AST
+validation, allowed-table/function checks, the restricted `quiz_taker` role,
+a read-only transaction, a 5-second statement timeout and 500-row result limit
+apply. Executions use the existing audit logging. Generation alone is not
+added to the database audit log.
+
+`result_validation.py` compares returned cell values with the selected
+question's stored expected result. It handles decimal amounts and ISO dates,
+allows different column aliases, and checks row counts and row/column order
+(all five prompts specify ordering). SQL strings are never compared. If the
+natural-language input asks a different question, the selected quiz's expected
+result may not apply; the UI states which question is used for comparison.
+Invalid generated SQL is displayed with its execution error and is not marked
+correct. The app does not automatically repair failed SQL.
+
+### Checks and screenshot evidence
+
+`python rag_checks.py` tests real Chroma retrieval for all five quiz questions,
+checks that retrieved documents reach the API request, checks signed-out
+generation and quota errors, and exercises result comparison. The Gemini
+response is mocked in these offline checks. The GitHub Actions workflow runs
+them before the existing live database checks. An actual Gemini call and the
+deployed UI must also be tested with private credentials.
+
+**Submission evidence still to capture after deployment:**
+
+1. Basic screenshot: selected question, natural-language input and generated SQL.
+2. Extra credit screenshot: generated/executed SQL, result table and validation
+   outcome. The retrieval expander can also be shown as evidence of vector search.
+
+Save screenshots as `docs/screenshots/rag-basic.png` and
+`docs/screenshots/rag-validation.png` and embed them here before submitting:
+
+```markdown
+![Question and AI-generated SQL](docs/screenshots/rag-basic.png)
+![Executed SQL, result table, and validation](docs/screenshots/rag-validation.png)
+```
+
+Do not include credentials in screenshots. This section documents the new
+implementation; the Week 7 verification above does not claim that the new
+Gemini integration has already been tested live.
